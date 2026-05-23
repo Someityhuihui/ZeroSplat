@@ -1,0 +1,5 @@
+gradio_outputs/
+__pycache__/
+*.pyc
+*.ply
+*.splat
