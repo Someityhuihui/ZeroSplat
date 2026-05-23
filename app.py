@@ -9,36 +9,45 @@ OUTPUT_DIR = "gradio_outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def convert_ply_to_splat(ply_path, output_path):
-    """极速版：将 3DGS 的 PLY 转换为 Web 端专用的二进制 .splat 格式"""
+    """修正版：严格对齐 Web 端 32 bytes 标准的 .splat 格式"""
     plydata = PlyData.read(ply_path)
     v = plydata['vertex'].data
     
+    # 1. 位置 (3 * float32 = 12 bytes)
     pos = np.vstack([v['x'], v['y'], v['z']]).T
-    scales = np.exp(np.vstack([v['scale_0'], v['scale_1'], v['scale_2']]).T)
-    rot = np.vstack([v['rot_0'], v['rot_1'], v['rot_2'], v['rot_3']]).T
-    rot = rot / np.linalg.norm(rot, axis=1, keepdims=True)
     
+    # 2. 缩放 (3 * float32 = 12 bytes) - 必须放在旋转前面！
+    scales = np.exp(np.vstack([v['scale_0'], v['scale_1'], v['scale_2']]).T)
+    
+    # 3. 颜色与透明度 (4 * uint8 = 4 bytes)
     SH_C0 = 0.28209479177387814
     dc = np.vstack([v['f_dc_0'], v['f_dc_1'], v['f_dc_2']]).T
     rgb = np.clip((dc * SH_C0 + 0.5) * 255, 0, 255).astype(np.uint8)
     opacity = np.clip((1.0 / (1.0 + np.exp(-v['opacity']))) * 255, 0, 255).astype(np.uint8)
     rgba = np.hstack([rgb, opacity.reshape(-1, 1)])
 
+    # 4. 旋转 (4 * uint8 = 4 bytes) - 必须从 float32 压缩！
+    rot = np.vstack([v['rot_0'], v['rot_1'], v['rot_2'], v['rot_3']]).T
+    rot = rot / np.linalg.norm(rot, axis=1, keepdims=True)
+    # 将 [-1, 1] 的四元数映射到 [0, 255] 的无符号整数
+    rot_uint8 = np.clip((rot + 1.0) * 0.5 * 255, 0, 255).astype(np.uint8)
+
+    # 构建严格 32 字节结构：pos(12) + scale(12) + rgba(4) + rot(4) = 32 bytes
     dtype = np.dtype([
-        ('pos', np.float32, (3,)), ('rgba', np.uint8, (4,)),
-        ('scale', np.float32, (3,)), ('rot', np.float32, (4,))
+        ('pos', np.float32, (3,)),
+        ('scale', np.float32, (3,)),
+        ('rgba', np.uint8, (4,)),
+        ('rot', np.uint8, (4,))
     ])
     buffer = np.empty(len(pos), dtype=dtype)
     buffer['pos'] = pos
-    buffer['rgba'] = rgba
     buffer['scale'] = scales
-    buffer['rot'] = rot
+    buffer['rgba'] = rgba
+    buffer['rot'] = rot_uint8
     
     with open(output_path, 'wb') as f:
         f.write(buffer.tobytes())
-        
-    return output_path
-
+    
 
 def process_gaussian_splat(input_ply, opacity_thresh, roi_radius, max_distance, export_rgb, progress=gr.Progress()):
     if input_ply is None:

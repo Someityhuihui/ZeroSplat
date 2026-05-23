@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ZeroSplat Web Viewer</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        canvas { width: 100vw; height: 100vh; display: block; }
+        #info {
+            position: absolute; top: 15px; left: 15px; color: white; 
+            background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">🚀 ZeroSplat Viewer | 鼠标左键旋转，滚轮缩放</div>
+    <canvas id="canvas"></canvas>
+
+    <!-- 引入开源的 3DGS 渲染库 (基于 WebGPU) -->
+    <script type="module">
+        import { Scene, SplatRenderer, Camera } from "https://cdn.jsdelivr.net/npm/@antimatter15/splat@latest/dist/splat.mjs";
+
+        const canvas = document.getElementById("canvas");
+        const scene = new Scene(canvas);
+        const camera = new Camera();
+        const renderer = new SplatRenderer();
+
+        // 加载我们的模型！
+        const splatUrl = "./truck_web.splat"; 
+
+        scene.addObjectFromUrl(splatUrl).then(() => {
+            document.getElementById("info").innerText = "🚀 ZeroSplat Viewer | 模型加载完成！";
+            requestAnimationFrame(animate);
+        }).catch(err => {
+            document.getElementById("info").innerText = "❌ 加载失败: " + err;
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            camera.update();
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
