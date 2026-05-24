@@ -1,5 +1,18 @@
-gradio_outputs/
+# Python
 __pycache__/
-*.pyc
-*.ply
-*.splat
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Output data (非常重要！不要把用户的训练结果推上去了)
+zerosplat_jobs/

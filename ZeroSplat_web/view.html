@@ -3,44 +3,153 @@
 <head>
     <meta charset="UTF-8">
     <title>ZeroSplat Web Viewer</title>
+    <script>
+        document.addEventListener('dragover', function(e) { e.preventDefault(); }, false);
+        document.addEventListener('drop', function(e) { e.preventDefault(); }, false);
+    </script>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
         canvas { width: 100vw; height: 100vh; display: block; }
         #info {
             position: absolute; top: 15px; left: 15px; color: white; 
             background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px;
-            pointer-events: none;
+            pointer-events: none; z-index: 10;
+        }
+        #upload-container {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 20; text-align: center; color: white;
+        }
+        .upload-btn {
+            background: #007bff; color: white; padding: 20px 40px;
+            font-size: 24px; border: none; border-radius: 15px; cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0, 123, 255, 0.4);
+        }
+        .hint { margin-top: 20px; font-size: 16px; color: #888; }
+        .hidden { display: none !important; }
+        #debug-console {
+            position: absolute; bottom: 10px; left: 10px; right: 10px;
+            height: 180px; background: rgba(0, 0, 0, 0.9); color: #0f0;
+            font-family: monospace; font-size: 13px; padding: 10px;
+            overflow-y: auto; z-index: 100; border: 1px solid #333;
+            white-space: pre-wrap;
         }
     </style>
 </head>
 <body>
-    <div id="info">🚀 ZeroSplat Viewer | 鼠标左键旋转，滚轮缩放</div>
+    <div id="info">🚀 ZeroSplat Viewer</div>
     <canvas id="canvas"></canvas>
+    
+    <div id="upload-container">
+        <button class="upload-btn" id="select-btn">📁 选择 .splat 或 .ply 文件</button>
+        <div class="hint">或者直接将文件拖拽到此页面</div>
+        <div class="hint" style="color:#ffaa00; margin-top:10px;">⚠️ 必须使用 Chrome 或 Edge 浏览器，并通过本地服务器打开！</div>
+        <input type="file" id="file-input" accept=".splat,.ply" style="display: none;">
+    </div>
 
-    <!-- 引入开源的 3DGS 渲染库 (基于 WebGPU) -->
+    <div id="debug-console">[System] 启动诊断...</div>
+
     <script type="module">
-        import { Scene, SplatRenderer, Camera } from "https://cdn.jsdelivr.net/npm/@antimatter15/splat@latest/dist/splat.mjs";
+        const debugEl = document.getElementById('debug-console');
+        function log(msg) {
+            console.log(msg);
+            debugEl.textContent += '\n' + msg;
+            debugEl.scrollTop = debugEl.scrollHeight;
+        }
 
-        const canvas = document.getElementById("canvas");
-        const scene = new Scene(canvas);
-        const camera = new Camera();
-        const renderer = new SplatRenderer();
+        // 1. 检查 WebGPU 支持
+        if (!navigator.gpu) {
+            log('[Error] ❌ 你的浏览器不支持 WebGPU！请使用最新版 Chrome 或 Edge 浏览器。');
+            alert("不支持 WebGPU！请使用最新版 Chrome 或 Edge。");
+        } else {
+            log('[System] ✅ WebGPU 支持检测通过。');
+        }
 
-        // 加载我们的模型！
-        const splatUrl = "./truck_web.splat"; 
+        log('[System] 开始加载 3D 渲染引擎 (尝试 CDN 1: unpkg)...');
 
-        scene.addObjectFromUrl(splatUrl).then(() => {
-            document.getElementById("info").innerText = "🚀 ZeroSplat Viewer | 模型加载完成！";
-            requestAnimationFrame(animate);
-        }).catch(err => {
-            document.getElementById("info").innerText = "❌ 加载失败: " + err;
-        });
+        let scene, camera, renderer;
+        const CDN_URL_1 = "https://unpkg.com/@antimatter15/splat@latest/dist/splat.mjs";
+        const CDN_URL_2 = "https://cdn.jsdelivr.net/npm/@antimatter15/splat@latest/dist/splat.mjs";
+
+        async function loadEngine() {
+            try {
+                const module = await import(CDN_URL_1);
+                log('[System] ✅ CDN 1 加载成功！');
+                return module;
+            } catch (err1) {
+                log('[System] ⚠️ CDN 1 加载失败 (网络超时或被墙)，尝试 CDN 2: jsdelivr...');
+                try {
+                    const module = await import(CDN_URL_2);
+                    log('[System] ✅ CDN 2 加载成功！');
+                    return module;
+                } catch (err2) {
+                    log('[System] ❌ CDN 2 也加载失败！请检查你的网络连接。');
+                    log('[Error] ' + err2.message);
+                    alert("3D 引擎加载失败，请检查网络连接或按 F12 查看控制台。");
+                    throw err2;
+                }
+            }
+        }
+
+        try {
+            const module = await loadEngine();
+            scene = new module.Scene(document.getElementById("canvas"));
+            camera = new module.Camera();
+            renderer = new module.SplatRenderer();
+            log('[System] ✅ 3D 引擎初始化完成！等待加载模型...');
+        } catch (err) {
+            log('[System] ❌ 引擎初始化失败，页面无法工作。');
+        }
+
+        const uploadContainer = document.getElementById('upload-container');
+        const selectBtn = document.getElementById('select-btn');
+        const fileInput = document.getElementById('file-input');
+        const info = document.getElementById("info");
+        let isAnimating = false;
 
         function animate() {
             requestAnimationFrame(animate);
             camera.update();
             renderer.render(scene, camera);
         }
+
+        async function loadModel(url, filename) {
+            uploadContainer.classList.add('hidden');
+            info.innerText = `⏳ 正在加载: ${filename}...`;
+            log(`[Loader] 开始解析文件: ${filename}`);
+            
+            try {
+                await scene.addObjectFromUrl(url);
+                info.innerText = `🚀 当前模型: ${filename}`;
+                log('[Loader] ✅ 模型加载完成！');
+                if (!isAnimating) {
+                    isAnimating = true;
+                    animate();
+                }
+            } catch (err) {
+                info.innerText = `❌ 加载失败`;
+                log('[Loader] ❌ 模型解析失败！');
+                log('[Error] ' + err.message);
+                alert("模型加载失败！\n请确保：\n1. 文件是标准的 .splat 或 .ply 格式\n2. 通过 python -m http.server 运行\n错误: " + err.message);
+                uploadContainer.classList.remove('hidden');
+            }
+        }
+
+        function handleFile(file) {
+            if (!file) return;
+            log(`[File] 检测到文件: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+            const url = URL.createObjectURL(file);
+            loadModel(url, file.name);
+        }
+
+        selectBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+        document.body.addEventListener('drop', (e) => {
+            e.preventDefault();
+            log('[File] 检测到拖拽文件');
+            const file = e.dataTransfer.files[0];
+            handleFile(file);
+        });
     </script>
 </body>
 </html>
